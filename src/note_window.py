@@ -5,11 +5,12 @@ import re
 import uuid
 import json
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QStackedWidget, QTextBrowser, QMenu, QGraphicsDropShadowEffect
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QStackedWidget, QTextBrowser, QMenu, QGraphicsDropShadowEffect,
+    QApplication
 )
 from PySide6.QtGui import QAction, QColor, QTextCursor, QMouseEvent
-from PySide6.QtCore import Qt, QSize, QRect, QPoint, Signal, QUrl
+from PySide6.QtCore import Qt, QSize, QRect, QPoint, Signal, QUrl, QPropertyAnimation, QEasingCurve
 
 from editor import MarkdownEditor
 from styles import get_theme_stylesheet, THEMES
@@ -19,65 +20,68 @@ class TitleBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("TitleBar")
-        self.setFixedHeight(30)
+        self.setFixedHeight(18)  # Thin handle style
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(2)
         
-        # Left: Color Dot Menu Button
+        # Left: Compact Color Dot Button
         self.color_btn = QPushButton(self)
-        self.color_btn.setFixedSize(14, 14)
+        self.color_btn.setFixedSize(10, 10)
         self.color_btn.setStyleSheet("""
             QPushButton {
-                border-radius: 7px;
-                border: 1px solid rgba(0, 0, 0, 0.2);
+                border-radius: 5px;
+                border: 1px solid rgba(0, 0, 0, 0.15);
             }
         """)
         layout.addWidget(self.color_btn)
         
-        # Title text (auto-extracted from Markdown)
-        self.title_label = QLabel("Note", self)
-        self.title_label.setObjectName("TitleLabel")
-        layout.addWidget(self.title_label)
         layout.addStretch()
         
-        # Action Buttons
+        # Right: Action Buttons - Compact
         self.mode_btn = QPushButton("👁", self)
         self.mode_btn.setToolTip("Toggle Preview (Ctrl+P)")
         self.mode_btn.setProperty("class", "TitleBarButton")
-        self.mode_btn.setFixedSize(22, 22)
+        self.mode_btn.setFixedSize(16, 16)
         layout.addWidget(self.mode_btn)
         
         self.pin_btn = QPushButton("📌", self)
         self.pin_btn.setToolTip("Always on Top")
         self.pin_btn.setProperty("class", "TitleBarButton")
-        self.pin_btn.setFixedSize(22, 22)
+        self.pin_btn.setFixedSize(16, 16)
         layout.addWidget(self.pin_btn)
         
         self.collapse_btn = QPushButton("−", self)
         self.collapse_btn.setToolTip("Collapse to Dot")
         self.collapse_btn.setProperty("class", "TitleBarButton")
-        self.collapse_btn.setFixedSize(22, 22)
+        self.collapse_btn.setFixedSize(16, 16)
         layout.addWidget(self.collapse_btn)
         
         self.close_btn = QPushButton("×", self)
         self.close_btn.setObjectName("CloseButton")
         self.close_btn.setToolTip("Hide Note")
         self.close_btn.setProperty("class", "TitleBarButton")
-        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.setFixedSize(16, 16)
         layout.addWidget(self.close_btn)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            # Delegate drag to Wayland compositor or OS
-            window = self.window()
-            if window and window.windowHandle():
-                window.windowHandle().startSystemMove()
+            self.press_pos = event.globalPosition().toPoint()
+            self.drag_triggered = False
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if hasattr(self, 'press_pos') and not self.drag_triggered:
+            dist = (event.globalPosition().toPoint() - self.press_pos).manhattanLength()
+            if dist > 6:
+                self.drag_triggered = True
+                window = self.window()
+                if window and window.windowHandle():
+                    window.windowHandle().startSystemMove()
+                else:
+                    self.parent().initiate_fallback_drag(event)
                 event.accept()
-            else:
-                # Fallback drag initiation handled by parent
-                self.parent().initiate_fallback_drag(event)
 
 
 class StickyNote(QWidget):
@@ -90,32 +94,37 @@ class StickyNote(QWidget):
         self.manager = manager
         self.note_id = note_id or str(uuid.uuid4())
         
-        # Load metadata and content
+        # Storage
         self.data_dir = "./data"
         self.notes_dir = os.path.join(self.data_dir, "notes")
         os.makedirs(self.notes_dir, exist_ok=True)
-        
         self.filepath = os.path.join(self.notes_dir, f"{self.note_id}.md")
         
         # Default Settings
         self.theme_key = "yellow"
-        self.is_pinned = False
+        self.is_pinned = True
         self.is_collapsed = False
-        self.view_mode = "edit"  # "edit" or "render"
-        self.expanded_geometry = QRect(200, 200, 300, 260)
+        self.view_mode = "edit"
+        self.expanded_geometry = QRect(200, 200, 240, 200) # Compact sticky sizes
+        
+        # Animation & Opacity helpers
+        self.opacity_anim = None
+        self.geom_anim = None
+        self.is_focused = False
         
         # Window attributes
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumSize(120, 80)
+        self.setMinimumSize(80, 60)
         
         self.init_ui()
         self.load_note()
         self.apply_theme()
         
-        # Setup Autosave on text changes
+        # Apply initial theme stylesheet
+        
+        # Setup Autosave
         self.editor.textChanged.connect(self.save_note)
-        self.editor.textChanged.connect(self.update_title)
 
     def init_ui(self):
         # Base shadow frame to host glassmorphism styling
@@ -135,7 +144,7 @@ class StickyNote(QWidget):
         self.title_bar = TitleBar(self)
         self.content_layout.addWidget(self.title_bar)
         
-        # Content Stack: Editor and Viewer
+        # Content Stack
         self.stack = QStackedWidget(self)
         self.content_layout.addWidget(self.stack)
         
@@ -150,44 +159,94 @@ class StickyNote(QWidget):
         self.viewer.anchorClicked.connect(self.handle_link_click)
         self.stack.addWidget(self.viewer)
         
-        # Collapsed Dot Widget
+        # Collapsed Dot Widget - Smaller (24x24)
         self.dot_widget = QPushButton(self)
         self.dot_widget.setObjectName("CollapsedDot")
-        self.dot_widget.setFixedSize(36, 36)
-        self.dot_widget.setToolTip("Double-click to expand note")
+        self.dot_widget.setFixedSize(24, 24)
+        self.dot_widget.setToolTip("Click once to expand note")
         self.dot_widget.hide()
         
         # Connect Buttons
         self.title_bar.mode_btn.clicked.connect(self.toggle_view_mode)
         self.title_bar.pin_btn.clicked.connect(self.toggle_pinned)
         self.title_bar.collapse_btn.clicked.connect(self.toggle_collapse)
-        self.title_bar.close_btn.clicked.connect(self.hide)
+        self.title_bar.close_btn.clicked.connect(self.deactivate)
         self.title_bar.color_btn.clicked.connect(self.show_color_menu)
         
-        # Collapsed Dot interaction
+        # Collapsed Dot drag or click filters
         self.dot_widget.installEventFilter(self)
         
         # Add Drop Shadow effect
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(12)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        shadow.setOffset(0, 4)
-        self.main_widget.setGraphicsEffect(shadow)
+        self.shadow = QGraphicsDropShadowEffect(self)
+        self.shadow.setBlurRadius(10)
+        self.shadow.setColor(QColor(0, 0, 0, 50))
+        self.shadow.setOffset(0, 3)
+        self.main_widget.setGraphicsEffect(self.shadow)
+
+    # Hover & Focus Transitions via Style Engine
+    def enterEvent(self, event):
+        self.apply_theme_state(is_hovered=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.apply_theme_state(is_hovered=self.is_focused)
+        super().leaveEvent(event)
+
+    def set_focused_state(self, is_focused):
+        self.is_focused = is_focused
+        self.apply_theme_state(self.underMouse() or self.is_focused)
+
+    def apply_theme_state(self, is_hovered):
+        if self.is_collapsed:
+            # Styled dot opacity
+            theme = THEMES.get(self.theme_key, THEMES["yellow"])
+            hex_color = theme['accent_color'].lstrip('#')
+            r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            
+            alpha = 240 if is_hovered else 90 # 0.94 vs 0.35
+            hover_alpha = 240
+            
+            self.dot_widget.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: rgba({r}, {g}, {b}, {alpha});
+                    border: 1px solid rgba(255, 255, 255, 0.75);
+                    border-radius: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: rgba({r}, {g}, {b}, {hover_alpha});
+                }}
+            """)
+        else:
+            qss = get_theme_stylesheet(self.theme_key, is_hovered=is_hovered)
+            self.setStyleSheet(qss)
 
     def eventFilter(self, watched, event):
-        # Handle dragging and clicking of the collapsed dot
+        # Handle dragging vs single-clicking of the collapsed dot
         if watched == self.dot_widget:
-            if event.type() == QMouseEvent.Type.MouseButtonDblClick:
-                self.toggle_collapse()
-                return True
-            elif event.type() == QMouseEvent.Type.MouseButtonPress:
+            if event.type() == QMouseEvent.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.LeftButton:
-                    window = self.window()
-                    if window and window.windowHandle():
-                        window.windowHandle().startSystemMove()
+                    self.dot_press_pos = event.globalPosition().toPoint()
+                    self.dot_drag_triggered = False
+                    event.accept()
+                    return True
+            elif event.type() == QMouseEvent.Type.MouseMove:
+                if hasattr(self, 'dot_press_pos') and not self.dot_drag_triggered:
+                    dist = (event.globalPosition().toPoint() - self.dot_press_pos).manhattanLength()
+                    if dist > 6:
+                        self.dot_drag_triggered = True
+                        window = self.window()
+                        if window and window.windowHandle():
+                            window.windowHandle().startSystemMove()
+                        else:
+                            self.initiate_fallback_drag(event)
                         event.accept()
-                    else:
-                        self.initiate_fallback_drag(event)
+                        return True
+            elif event.type() == QMouseEvent.Type.MouseButtonRelease:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    if hasattr(self, 'dot_drag_triggered') and not self.dot_drag_triggered:
+                        # Single-click triggers expand state!
+                        self.toggle_collapse()
+                    event.accept()
                     return True
         return super().eventFilter(watched, event)
 
@@ -196,32 +255,40 @@ class StickyNote(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.initiate_fallback_drag(event)
+            # Click hold drags note by background click
+            self.press_pos = event.globalPosition().toPoint()
+            self.drag_triggered = False
+            event.accept()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and hasattr(self, 'drag_position'):
+        if hasattr(self, 'press_pos') and not self.drag_triggered:
+            dist = (event.globalPosition().toPoint() - self.press_pos).manhattanLength()
+            if dist > 6:
+                self.drag_triggered = True
+                window = self.window()
+                if window and window.windowHandle():
+                    window.windowHandle().startSystemMove()
+                else:
+                    self.initiate_fallback_drag(event)
+                event.accept()
+        elif hasattr(self, 'drag_position'):
+            # Fallback manual move
             self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if hasattr(self, 'drag_position'):
+            delattr(self, 'drag_position')
+        super().mouseReleaseEvent(event)
 
     def apply_theme(self):
-        # Load theme stylesheet
-        qss = get_theme_stylesheet(self.theme_key)
-        self.setStyleSheet(qss)
-        
-        # Update Title Bar Color Dot indicator
-        theme = THEMES.get(self.theme_key, THEMES["yellow"])
-        self.title_bar.color_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {theme['accent_color']};
-                border-radius: 7px;
-                border: 1px solid rgba(0, 0, 0, 0.15);
-            }}
-        """)
+        self.apply_theme_state(is_hovered=self.underMouse() or self.is_focused)
         
         # Update Editor syntax highlight colors
         is_dark = (self.theme_key == "carbon")
         self.editor.update_theme(is_dark)
         
-        # Re-render viewer in case colors changed
+        # Re-render view
         if self.view_mode == "render":
             self.render_markdown()
 
@@ -244,18 +311,22 @@ class StickyNote(QWidget):
             }
         """)
         
+        # Color Themes
         for key, theme in THEMES.items():
             action = QAction(theme["name"], self)
-            # Create a closure for the theme key
             action.triggered.connect(lambda checked=False, k=key: self.set_theme(k))
             menu.addAction(action)
             
         menu.addSeparator()
         
-        delete_action = QAction("🗑 Delete Note", self)
-        delete_action.setStyleSheet("color: #FF453A;")
-        delete_action.triggered.connect(self.confirm_delete)
-        menu.addAction(delete_action)
+        # Multipurpose Templates (Standard vs Checklist)
+        todo_action = QAction("📋 Convert to Checklist", self)
+        todo_action.triggered.connect(self.convert_to_checklist)
+        menu.addAction(todo_action)
+        
+        note_action = QAction("📝 Convert to Standard", self)
+        note_action.triggered.connect(self.convert_to_standard)
+        menu.addAction(note_action)
         
         menu.exec(self.title_bar.color_btn.mapToGlobal(QPoint(0, self.title_bar.color_btn.height())))
 
@@ -264,8 +335,32 @@ class StickyNote(QWidget):
         self.apply_theme()
         self.config_changed.emit()
 
+    def convert_to_checklist(self):
+        content = self.editor.toPlainText().strip()
+        # Prepopulate list template if empty or no lists
+        if not content or not re.search(r'\[\s\]|\[[xX]\]', content):
+            checklist_template = "# Checklist\n- [ ] Task 1\n- [ ] Task 2"
+            if content:
+                content = content + "\n\n" + checklist_template
+            else:
+                content = checklist_template
+            self.editor.setPlainText(content)
+            
+        # Swap view mode to preview to display checklist elements
+        if self.view_mode == "edit":
+            self.toggle_view_mode()
+        self.config_changed.emit()
+
+    def convert_to_standard(self):
+        content = self.editor.toPlainText()
+        # Remove checkbox tags
+        cleaned = re.sub(r'^\s*[\-\*]\s+\[[\sxX]\]\s*', '- ', content, flags=re.MULTILINE)
+        self.editor.setPlainText(cleaned)
+        if self.view_mode == "render":
+            self.toggle_view_mode()
+        self.config_changed.emit()
+
     def confirm_delete(self):
-        # Trigger note manager deletion
         self.note_deleted.emit(self.note_id)
 
     def toggle_pinned(self):
@@ -305,83 +400,105 @@ class StickyNote(QWidget):
     def render_markdown(self):
         raw_text = self.editor.toPlainText()
         theme = THEMES.get(self.theme_key, THEMES["yellow"])
-        
-        # Render HTML
         html = self.get_rendered_html(raw_text, theme["text_color"], theme["accent_color"])
         self.viewer.setHtml(html)
 
+    # GitHub Markdown spec rendering (Jekyll style)
     def get_rendered_html(self, markdown_text, text_color, accent_color):
-        # Preprocess Markdown Checkboxes into clickable anchors
         lines = markdown_text.split('\n')
         checkbox_idx = 0
         processed_lines = []
         
         for line in lines:
-            # Matches "- [ ] " or "* [ ] "
             match_unchecked = re.match(r'^(\s*[\-\*]\s+)\[\s\](.*)', line)
-            # Matches "- [x] " or "* [x] "
             match_checked = re.match(r'^(\s*[\-\*]\s+)\[[xX]\](.*)', line)
             
             if match_unchecked:
                 prefix, rest = match_unchecked.groups()
-                line = f"{prefix}<a href='toggle:{checkbox_idx}' style='text-decoration:none; color:{text_color}; font-family: monospace; font-size:16px;'>☐</a> {rest}"
+                line = f"{prefix}<a href='toggle:{checkbox_idx}' style='text-decoration:none; color:{text_color}; font-family: monospace; font-size: 15px;'>☐</a> {rest}"
                 checkbox_idx += 1
             elif match_checked:
                 prefix, rest = match_checked.groups()
-                line = f"{prefix}<a href='toggle:{checkbox_idx}' style='text-decoration:none; color:{accent_color}; font-family: monospace; font-size:16px;'>☑</a> <span style='text-decoration: line-through; opacity: 0.6;'>{rest}</span>"
+                line = f"{prefix}<a href='toggle:{checkbox_idx}' style='text-decoration:none; color:{accent_color}; font-family: monospace; font-size: 15px;'>☑</a> <span style='text-decoration: line-through; opacity: 0.55;'>{rest}</span>"
                 checkbox_idx += 1
                 
             processed_lines.append(line)
             
         processed_md = '\n'.join(processed_lines)
         
-        # Render markdown to HTML
         md = MarkdownIt("commonmark")
         html_body = md.render(processed_md)
         
-        # Wrap HTML with layout stylesheet matching the selected theme style
+        # Color theme styles matching GitHub Markdown CSS rules
+        is_dark = (self.theme_key == "carbon")
+        border_color = "rgba(255,255,255,0.1)" if is_dark else "rgba(0,0,0,0.06)"
+        code_bg = "rgba(255,255,255,0.08)" if is_dark else "rgba(0,0,0,0.04)"
+        hr_color = "rgba(255,255,255,0.15)" if is_dark else "rgba(0,0,0,0.08)"
+        
         styled_html = f"""
         <html>
         <head>
         <style>
             body {{
                 color: {text_color};
-                font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
-                font-size: 13.5px;
-                line-height: 1.5;
-                margin: 8px 12px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                font-size: 13px;
+                line-height: 1.6;
+                margin: 6px 10px;
             }}
-            p {{ margin: 0 0 8px 0; }}
+            p {{ margin: 0 0 6px 0; }}
             a {{
                 color: {accent_color};
                 text-decoration: none;
             }}
-            h1, h2, h3, h4 {{
-                margin: 12px 0 6px 0;
-                font-weight: bold;
-                color: {accent_color};
+            a:hover {{
+                text-decoration: underline;
             }}
-            h1 {{ font-size: 16px; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 2px; }}
-            h2 {{ font-size: 14px; }}
+            h1, h2, h3 {{
+                margin: 10px 0 4px 0;
+                font-weight: 600;
+                color: {accent_color};
+                line-height: 1.25;
+            }}
+            h1 {{ font-size: 15px; border-bottom: 1px solid {border_color}; padding-bottom: 2px; }}
+            h2 {{ font-size: 13.5px; }}
             h3 {{ font-size: 13px; }}
+            hr {{
+                height: 1px;
+                padding: 0;
+                margin: 10px 0;
+                background-color: {hr_color};
+                border: 0;
+            }}
             code {{
-                font-family: 'Courier New', monospace;
-                background-color: rgba(120, 120, 120, 0.12);
+                font-family: ui-monospace, SFMono-Regular, SF Pro Mono, Menlo, monospace;
+                background-color: {code_bg};
                 padding: 1px 4px;
                 border-radius: 3px;
-                font-size: 12px;
+                font-size: 11.5px;
             }}
             pre {{
-                background-color: rgba(120, 120, 120, 0.12);
+                background-color: {code_bg};
                 padding: 6px;
                 border-radius: 4px;
                 overflow-x: auto;
+                margin: 0 0 8px 0;
+            }}
+            pre code {{
+                padding: 0;
+                background-color: transparent;
             }}
             ul, ol {{
-                margin: 0 0 8px 0;
-                padding-left: 20px;
+                margin: 0 0 6px 0;
+                padding-left: 18px;
             }}
             li {{ margin-bottom: 2px; }}
+            blockquote {{
+                margin: 0 0 8px 0;
+                padding: 0 8px;
+                color: #8E8E93;
+                border-left: 3px solid #0A84FF;
+            }}
         </style>
         </head>
         <body>
@@ -409,142 +526,136 @@ class StickyNote(QWidget):
             match = matches[index_to_toggle]
             start, end = match.span()
             current_val = match.group(1)
-            
             new_val = "[x]" if current_val == "[ ]" else "[ ]"
-            
             new_text = markdown_text[:start] + new_val + markdown_text[end:]
-            
-            # Update Editor text, which saves the file and updates viewer
             self.editor.setPlainText(new_text)
             self.render_markdown()
 
+    # Smooth Collapse/Expand Transitions using QPropertyAnimation
     def toggle_collapse(self):
+        if self.geom_anim and self.geom_anim.state() == QPropertyAnimation.State.Running:
+            return
+            
         if not self.is_collapsed:
-            # Collapse to Dot
+            # 1. Collapse Note to Dot
             self.expanded_geometry = self.geometry()
             self.is_collapsed = True
             
-            # Hide main elements
+            # Target geometry is a 24x24 rect centered in current window
+            center = self.geometry().center()
+            target_rect = QRect(center.x() - 12, center.y() - 12, 24, 24)
+            
+            # Swap widgets before sizing animation to prevent clipping
             self.main_widget.hide()
-            
-            # Remove margin space for the dot view
-            self.main_layout.setContentsMargins(0, 0, 0, 0)
-            
-            # Show dot and style the window frame to be tiny (transparent wrap)
             self.main_layout.removeWidget(self.main_widget)
+            self.main_layout.setContentsMargins(0, 0, 0, 0)
             self.main_layout.addWidget(self.dot_widget)
             
-            # Set the dot background color matching the accent
-            theme = THEMES.get(self.theme_key, THEMES["yellow"])
-            self.dot_widget.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {theme['accent_color']};
-                    border: 2px solid white;
-                    border-radius: 18px;
-                }}
-                QPushButton:hover {{
-                    background-color: {theme['border_color']};
-                }}
-            """)
-            
+            # Apply initial unhovered theme state to the dot
+            self.apply_theme_state(is_hovered=False)
             self.dot_widget.show()
-            self.resize(36, 36)
+            
+            # Run transition size animation
+            self.animate_transition(target_rect)
         else:
-            # Expand to Note window
+            # 2. Expand Dot to Note window
             self.is_collapsed = False
             
             # Hide dot
             self.dot_widget.hide()
             self.main_layout.removeWidget(self.dot_widget)
             
-            # Restore margins for note frame and shadow
+            # Restore margins for drop shadow
             self.main_layout.setContentsMargins(8, 8, 8, 8)
-            
-            # Show note frame
             self.main_layout.addWidget(self.main_widget)
             self.main_widget.show()
             
-            # Restore previous expanded sizing
-            self.setGeometry(self.expanded_geometry)
+            # Set to hovered style instantly on expand since cursor is on it
+            self.apply_theme_state(is_hovered=True)
             
-        self.config_changed.emit()
+            # Run expand size animation
+            self.animate_transition(self.expanded_geometry)
 
-    def update_title(self):
-        # Auto-extract title from the first header or first line
-        raw_text = self.editor.toPlainText().strip()
-        if not raw_text:
-            self.title_bar.title_label.setText("Note")
-            return
-            
-        first_line = raw_text.split("\n")[0]
-        # Strip Markdown header markings like #, ##, etc.
-        clean_title = re.sub(r'^#+\s*', '', first_line).strip()
-        # Truncate if too long
-        if len(clean_title) > 20:
-            clean_title = clean_title[:18] + "..."
-            
-        self.title_bar.title_label.setText(clean_title or "Note")
+    def animate_transition(self, target_rect):
+        self.geom_anim = QPropertyAnimation(self, b"geometry")
+        self.geom_anim.setDuration(220)
+        self.geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.geom_anim.setStartValue(self.geometry())
+        self.geom_anim.setEndValue(target_rect)
+        
+        # Enforce always stays on top flag persists through sizing
+        self.geom_anim.finished.connect(self.ensure_on_top)
+        self.geom_anim.start()
+
+    def ensure_on_top(self):
+        # Keep window stays on top flag enforced
+        flags = self.windowFlags()
+        if not (flags & Qt.WindowType.WindowStaysOnTopHint):
+            flags |= Qt.WindowType.WindowStaysOnTopHint
+            self.setWindowFlags(flags)
+            self.show()
+
+    def deactivate(self):
+        # Set note state to inactive (closed) in manager
+        self.hide()
+        if self.manager:
+            self.manager.toggle_note_active(self.note_id, False)
 
     def load_note(self):
-        # Load markdown note file contents
         if os.path.exists(self.filepath):
             with open(self.filepath, "r", encoding="utf-8") as f:
                 content = f.read()
             self.editor.setPlainText(content)
-            self.update_title()
 
     def save_note(self):
-        # Write markdown text contents to file
         content = self.editor.toPlainText()
         with open(self.filepath, "w", encoding="utf-8") as f:
             f.write(content)
 
     def load_config(self, config_dict):
-        # Hydrate note coordinates and state
         self.theme_key = config_dict.get("theme", "yellow")
-        self.is_pinned = config_dict.get("pinned", False)
+        self.is_pinned = config_dict.get("pinned", True)
         self.is_collapsed = config_dict.get("collapsed", False)
         self.view_mode = config_dict.get("view_mode", "edit")
         
         x = config_dict.get("x", 200)
         y = config_dict.get("y", 200)
-        w = config_dict.get("w", 300)
-        h = config_dict.get("h", 260)
+        w = config_dict.get("w", 240)
+        h = config_dict.get("h", 200)
         
         self.expanded_geometry = QRect(x, y, w, h)
         
-        # Apply configurations
         self.apply_theme()
         self.apply_pinned_state()
         
-        # Sync views
         if self.view_mode == "render":
-            self.view_mode = "edit"  # toggle_view_mode will switch it to render
+            self.view_mode = "edit"
             self.toggle_view_mode()
         else:
             self.stack.setCurrentIndex(0)
             
-        # Apply collapsed state
         if self.is_collapsed:
-            self.is_collapsed = False  # toggle_collapse will invert this
+            self.is_collapsed = False
             self.toggle_collapse()
-            # Move the dot window to the center of where the note was
-            center_x = x + w // 2 - 18
-            center_y = y + h // 2 - 18
+            center_x = x + w // 2 - 12
+            center_y = y + h // 2 - 12
             self.move(center_x, center_y)
         else:
             self.setGeometry(self.expanded_geometry)
 
     def get_config(self):
-        # Return note geometry and properties configuration dict
-        geom = self.expanded_geometry if not self.is_collapsed else self.expanded_geometry
+        geom = self.expanded_geometry
         current_geom = self.geometry()
         
-        # If expanded, save current position, otherwise keep the saved expanded geometry
         if not self.is_collapsed:
             x, y, w, h = current_geom.x(), current_geom.y(), current_geom.width(), current_geom.height()
         else:
             x, y, w, h = geom.x(), geom.y(), geom.width(), geom.height()
+            
+        # Get active status from parent notes mapping in manager
+        is_active = True
+        if self.manager:
+            is_active = self.note_id in self.manager.notes
             
         return {
             "id": self.note_id,
@@ -552,6 +663,7 @@ class StickyNote(QWidget):
             "pinned": self.is_pinned,
             "collapsed": self.is_collapsed,
             "view_mode": self.view_mode,
+            "active": is_active,
             "x": x,
             "y": y,
             "w": w,
@@ -559,13 +671,10 @@ class StickyNote(QWidget):
         }
 
     def keyPressEvent(self, event):
-        # Capture shortcuts
-        # Ctrl+P toggles View/Edit Mode
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_P:
             self.toggle_view_mode()
             event.accept()
             return
-            
         super().keyPressEvent(event)
 
     def closeEvent(self, event):

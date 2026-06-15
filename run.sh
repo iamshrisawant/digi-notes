@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# DotNotes Launch Script
+# DigiNotes Launch Script
 # Setup project folder path
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
-echo "=== DotNotes: CS50 Capstone Launcher ==="
+echo "=== DigiNotes: CS50 Capstone Launcher ==="
 
 # Check if virtual environment exists
 if [ ! -d ".venv" ]; then
@@ -31,7 +31,7 @@ if [ $? -ne 0 ]; then
     fi
 fi
 
-echo "Launching DotNotes in Wayland/X11..."
+echo "Launching DigiNotes in Wayland/X11..."
 # Enable native Wayland support for Qt if the session is Wayland
 if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
     export QT_QPA_PLATFORM="wayland;xcb"
