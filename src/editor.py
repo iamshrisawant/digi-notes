@@ -1,268 +1,340 @@
 # src/editor.py
 
 import re
-from PySide6.QtWidgets import QTextEdit, QListWidget, QListWidgetItem
-from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextCursor
-from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtWidgets import QTextEdit, QMenu, QApplication
+from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextCursor, QAction
+from PySide6.QtCore import Qt, QPoint, QRect, Signal
 
-class MarkdownHighlighter(QSyntaxHighlighter):
-    def __init__(self, parent=None, is_dark_theme=True):
-        super().__init__(parent)
-        self.rules = []
-
-        # Color definitions depending on theme contrast
-        if is_dark_theme:
-            color_header = QColor("#FF9F0A")  # Vibrant Orange
-            color_bold = QColor("#30D158")    # Vibrant Green
-            color_italic = QColor("#BF5AF2")  # Vibrant Purple
-            color_code = QColor("#FFD60A")    # Yellow tint
-            color_checkbox = QColor("#64D2FF")# Sky Blue
-            color_link = QColor("#0A84FF")    # Electric Blue
-        else:
-            color_header = QColor("#D97706")  # Amber/Orange
-            color_bold = QColor("#16A34A")    # Green
-            color_italic = QColor("#9333EA")  # Purple
-            color_code = QColor("#B45309")    # Darker Yellow/Brown
-            color_checkbox = QColor("#0284C7")# Blue
-            color_link = QColor("#2563EB")    # Blue link
-
-        # Format rules
-        # Headers (# Header)
-        fmt_header = QTextCharFormat()
-        fmt_header.setFontWeight(QFont.Weight.Bold)
-        fmt_header.setForeground(color_header)
-        self.rules.append((re.compile(r'^#+\s.*'), fmt_header))
-
-        # Bold (**bold** or __bold__)
-        fmt_bold = QTextCharFormat()
-        fmt_bold.setFontWeight(QFont.Weight.Bold)
-        fmt_bold.setForeground(color_bold)
-        self.rules.append((re.compile(r'\*\*[^\*]+\*\*'), fmt_bold))
-        self.rules.append((re.compile(r'__[^\_]+__'), fmt_bold))
-
-        # Italic (*italic* or _italic_)
-        fmt_italic = QTextCharFormat()
-        fmt_italic.setFontItalic(True)
-        fmt_italic.setForeground(color_italic)
-        self.rules.append((re.compile(r'\*[^\*]+\*'), fmt_italic))
-        self.rules.append((re.compile(r'\_[^\_]+\_'), fmt_italic))
-
-        # Checkbox unchecked (- [ ])
-        fmt_unchecked = QTextCharFormat()
-        fmt_unchecked.setFontWeight(QFont.Weight.Bold)
-        fmt_unchecked.setForeground(color_checkbox)
-        self.rules.append((re.compile(r'^\s*-\s\[\s\]'), fmt_unchecked))
-
-        # Checkbox checked (- [x] or - [X])
-        fmt_checked = QTextCharFormat()
-        fmt_checked.setFontWeight(QFont.Weight.Bold)
-        fmt_checked.setForeground(color_checkbox)
-        fmt_checked.setFontStrikeOut(True)
-        self.rules.append((re.compile(r'^\s*-\s\[[xX]\]'), fmt_checked))
-
-        # Bullet List (- or *)
-        fmt_bullet = QTextCharFormat()
-        fmt_bullet.setFontWeight(QFont.Weight.Bold)
-        fmt_bullet.setForeground(color_link)
-        self.rules.append((re.compile(r'^\s*[\-\*]\s'), fmt_bullet))
-
-        # Code block / inline code (`code`)
-        fmt_code = QTextCharFormat()
-        fmt_code.setFontFamily("Courier New")
-        fmt_code.setForeground(color_code)
-        self.rules.append((re.compile(r'`[^`]+`'), fmt_code))
-
-        # Link ([text](url))
-        fmt_link = QTextCharFormat()
-        fmt_link.setFontUnderline(True)
-        fmt_link.setForeground(color_link)
-        self.rules.append((re.compile(r'\[[^\]]+\]\([^\)]+\)'), fmt_link))
+class MarkdownLiveHighlighter(QSyntaxHighlighter):
+    def __init__(self, editor):
+        super().__init__(editor.document())
+        self.editor = editor
+        
+        # Color palettes for high-contrast light pastel backgrounds
+        self.color_header = QColor("#0A84FF")      # Vibrant Blue
+        self.color_bold = QColor("#1C1C1E")        # Solid dark text
+        self.color_italic = QColor("#1C1C1E")      # Solid dark text
+        self.color_code = QColor("#C2410C")        # Pastel Orange/Brown
+        self.color_checkbox = QColor("#30D158")    # Success Green
+        self.color_syntax_dim = QColor(142, 142, 147, 100) # Soft gray syntax character
+        self.color_syntax_hide = QColor(0, 0, 0, 0) # Transparent
 
     def highlightBlock(self, text):
-        for pattern, format_rule in self.rules:
-            for match in pattern.finditer(text):
-                start, end = match.span()
-                self.setFormat(start, end - start, format_rule)
+        cursor_block = self.editor.textCursor().blockNumber()
+        current_block = self.currentBlock().blockNumber()
+        is_cursor_line = (current_block == cursor_block)
+        
+        # 1. Heading Styles H1-H5
+        hdr_match = re.match(r'^(#{1,5})\s+(.*)', text)
+        if hdr_match:
+            hashes, content = hdr_match.groups()
+            prefix_len = len(hashes) + 1
+            sizes = {1: 16, 2: 14, 3: 12, 4: 11, 5: 10}
+            font_size = sizes.get(len(hashes), 10)
+            self.apply_header_format(text, font_size, is_cursor_line, prefix_len)
+            return
 
+        # 2. Blockquotes (> text)
+        bq_match = re.match(r'^(\s*>\s*)(.*)', text)
+        if bq_match:
+            prefix, content = bq_match.groups()
+            prefix_len = len(prefix)
+            
+            fmt_syntax = QTextCharFormat()
+            if is_cursor_line:
+                fmt_syntax.setForeground(self.color_syntax_dim)
+            else:
+                fmt_syntax.setForeground(self.color_syntax_hide)
+                fmt_syntax.setFontPointSize(1)
+            self.setFormat(0, prefix_len, fmt_syntax)
+            
+            fmt_text = QTextCharFormat()
+            fmt_text.setFontItalic(True)
+            fmt_text.setForeground(QColor("#8E8E93"))
+            self.setFormat(prefix_len, len(text) - prefix_len, fmt_text)
+            
+            self.highlight_inline_styles(text, is_cursor_line, prefix_len)
+            return
 
-class SlashMenu(QListWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setObjectName("SlashMenu")
-        self.setFixedWidth(180)
-        self.setFixedHeight(160)
+        # 3. Horizontal Divider Rules (--- or ***)
+        hr_match = re.match(r'^(\s*[\-\*_]{3,}\s*)$', text)
+        if hr_match:
+            fmt_hr = QTextCharFormat()
+            fmt_hr.setForeground(QColor("#C7C7CC"))
+            fmt_hr.setFontWeight(QFont.Weight.Bold)
+            fmt_hr.setFontStrikeOut(True)
+            self.setFormat(0, len(text), fmt_hr)
+            return
 
-        # Commands list: (Label, Markdown Template, cursor_offset)
-        self.commands = [
-            ("☐ Todo Checkbox", "- [ ] ", 0),
-            ("• Bullet Point", "- ", 0),
-            ("Header 1", "# ", 0),
-            ("Header 2", "## ", 0),
-            ("Header 3", "### ", 0),
-            ("** Bold Text", "****", -2),
-            ("* Italic Text", "**", -1),
-            ("` Code Block", "``", -1)
-        ]
+        # 4. Checklist items (Checked or Unchecked)
+        chk_checked = re.match(r'^(\s*[\-\*]\s+\[)([xX])(\]\s*)(.*)', text)
+        chk_unchecked = re.match(r'^(\s*[\-\*]\s+\[)(\s)(\]\s*)(.*)', text)
+        
+        if chk_checked:
+            prefix1, val, prefix2, rest = chk_checked.groups()
+            prefix_len = len(prefix1) + len(val) + len(prefix2)
+            
+            fmt_syntax = QTextCharFormat()
+            fmt_syntax.setForeground(self.color_checkbox if not is_cursor_line else self.color_syntax_dim)
+            fmt_syntax.setFontWeight(QFont.Weight.Bold)
+            self.setFormat(0, prefix_len, fmt_syntax)
+            
+            fmt_text = QTextCharFormat()
+            fmt_text.setFontStrikeOut(True)
+            fmt_text.setForeground(QColor("#8E8E93"))
+            self.setFormat(prefix_len, len(text) - prefix_len, fmt_text)
+            
+            self.highlight_inline_styles(text, is_cursor_line, prefix_len)
+            return
+            
+        elif chk_unchecked:
+            prefix1, val, prefix2, rest = chk_unchecked.groups()
+            prefix_len = len(prefix1) + len(val) + len(prefix2)
+            
+            fmt_syntax = QTextCharFormat()
+            fmt_syntax.setForeground(self.color_checkbox if not is_cursor_line else self.color_syntax_dim)
+            fmt_syntax.setFontWeight(QFont.Weight.Bold)
+            self.setFormat(0, prefix_len, fmt_syntax)
+            
+            self.highlight_inline_styles(text, is_cursor_line, prefix_len)
+            return
 
-        for label, _, _ in self.commands:
-            item = QListWidgetItem(label)
-            self.addItem(item)
+        # 5. Bullet & Numbered List Items
+        bullet_match = re.match(r'^(\s*[\-\*\+]\s+)(.*)', text)
+        if bullet_match:
+            prefix, rest = bullet_match.groups()
+            prefix_len = len(prefix)
+            
+            fmt_prefix = QTextCharFormat()
+            fmt_prefix.setForeground(self.color_header)
+            fmt_prefix.setFontWeight(QFont.Weight.Bold)
+            self.setFormat(0, prefix_len, fmt_prefix)
+            
+            self.highlight_inline_styles(text, is_cursor_line, prefix_len)
+            return
 
-        self.setCurrentRow(0)
+        num_match = re.match(r'^(\s*\d+\.\s+)(.*)', text)
+        if num_match:
+            prefix, rest = num_match.groups()
+            prefix_len = len(prefix)
+            
+            fmt_prefix = QTextCharFormat()
+            fmt_prefix.setForeground(self.color_header)
+            fmt_prefix.setFontWeight(QFont.Weight.Bold)
+            self.setFormat(0, prefix_len, fmt_prefix)
+            
+            self.highlight_inline_styles(text, is_cursor_line, prefix_len)
+            return
+
+        # 6. Standard lines
+        self.highlight_inline_styles(text, is_cursor_line, 0)
+
+    def apply_header_format(self, text, font_size, is_cursor_line, prefix_len):
+        fmt_header = QTextCharFormat()
+        fmt_header.setFontWeight(QFont.Weight.Bold)
+        fmt_header.setFontPointSize(font_size)
+        fmt_header.setForeground(self.color_header)
+        self.setFormat(prefix_len, len(text) - prefix_len, fmt_header)
+        
+        fmt_prefix = QTextCharFormat()
+        if is_cursor_line:
+            fmt_prefix.setForeground(self.color_syntax_dim)
+            fmt_prefix.setFontPointSize(font_size)
+            self.setFormat(0, prefix_len, fmt_prefix)
+        else:
+            fmt_prefix.setForeground(self.color_syntax_hide)
+            fmt_prefix.setFontPointSize(1)
+            self.setFormat(0, prefix_len, fmt_prefix)
+
+    def highlight_inline_styles(self, text, is_cursor_line, start_offset):
+        # Bold **bold** & __bold__
+        self.apply_regex_format(text, re.compile(r'\*\*([^\*]+)\*\*'), is_cursor_line, start_offset, border_len=2, font_weight=QFont.Weight.Bold, color=self.color_bold)
+        self.apply_regex_format(text, re.compile(r'__([^_]+)__'), is_cursor_line, start_offset, border_len=2, font_weight=QFont.Weight.Bold, color=self.color_bold)
+
+        # Italic *italic* & _italic_
+        self.apply_regex_format(text, re.compile(r'(?<!\*)\*([^\*]+)\*(?!\*)'), is_cursor_line, start_offset, border_len=1, font_italic=True, color=self.color_italic)
+        self.apply_regex_format(text, re.compile(r'(?<!_)_([^_]+)_(?!_)'), is_cursor_line, start_offset, border_len=1, font_italic=True, color=self.color_italic)
+
+        # Underline <u>text</u>
+        self.apply_regex_format(text, re.compile(r'<u>([^<]+)</u>'), is_cursor_line, start_offset, border_len=3, end_border_len=4, font_underline=True)
+
+        # Strike-through ~~text~~
+        self.apply_regex_format(text, re.compile(r'~~([^~]+)~~'), is_cursor_line, start_offset, border_len=2, font_strikeout=True, color=QColor("#8E8E93"))
+
+        # Highlight ==text==
+        self.apply_regex_format(text, re.compile(r'==([^=]+)=='), is_cursor_line, start_offset, border_len=2, bg_color=QColor("rgba(253, 224, 71, 0.40)"))
+
+        # Inline Code `code`
+        self.apply_regex_format(text, re.compile(r'`([^`]+)`'), is_cursor_line, start_offset, border_len=1, font_family="Courier New", color=self.color_code, bg_color=QColor("rgba(0, 0, 0, 0.05)"))
+
+        # LaTeX $$latex$$
+        self.apply_regex_format(text, re.compile(r'\$\$([^\$]+)\$\$'), is_cursor_line, start_offset, border_len=2, font_italic=True, color=QColor("#7E22CE"))
+
+        # Links [label](url)
+        link_pattern = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
+        for m in link_pattern.finditer(text, start_offset):
+            start, end = m.span()
+            label, url = m.groups()
+            label_start = start + 1
+            label_len = len(label)
+            url_part_start = label_start + label_len + 1 
+            url_part_len = len(url) + 2 
+            
+            fmt_syntax = QTextCharFormat()
+            if is_cursor_line:
+                fmt_syntax.setForeground(self.color_syntax_dim)
+            else:
+                fmt_syntax.setForeground(self.color_syntax_hide)
+                fmt_syntax.setFontPointSize(1)
+            self.setFormat(start, 1, fmt_syntax)
+            self.setFormat(label_start + label_len, url_part_len, fmt_syntax)
+            
+            fmt_text = QTextCharFormat()
+            fmt_text.setFontUnderline(True)
+            fmt_text.setForeground(QColor("#0A84FF"))
+            self.setFormat(label_start, label_len, fmt_text)
+
+    def apply_regex_format(self, text, pattern, is_cursor_line, start_offset, border_len, end_border_len=None, font_weight=None, font_italic=None, font_underline=None, font_strikeout=None, font_family=None, color=None, bg_color=None):
+        if end_border_len is None:
+            end_border_len = border_len
+            
+        for m in pattern.finditer(text, start_offset):
+            start, end = m.span()
+            length = end - start
+            text_len = length - border_len - end_border_len
+            
+            # Borders
+            fmt_syntax = QTextCharFormat()
+            if is_cursor_line:
+                fmt_syntax.setForeground(self.color_syntax_dim)
+            else:
+                fmt_syntax.setForeground(self.color_syntax_hide)
+                fmt_syntax.setFontPointSize(1)
+            self.setFormat(start, border_len, fmt_syntax)
+            self.setFormat(end - end_border_len, end_border_len, fmt_syntax)
+            
+            # Text inside
+            fmt_text = QTextCharFormat()
+            if font_weight is not None:
+                fmt_text.setFontWeight(font_weight)
+            if font_italic is not None:
+                fmt_text.setFontItalic(font_italic)
+            if font_underline is not None:
+                fmt_text.setFontUnderline(font_underline)
+            if font_strikeout is not None:
+                fmt_text.setFontStrikeOut(font_strikeout)
+            if font_family is not None:
+                fmt_text.setFontFamily(font_family)
+            if color is not None:
+                fmt_text.setForeground(color)
+            if bg_color is not None:
+                fmt_text.setBackground(bg_color)
+                
+            self.setFormat(start + border_len, text_len, fmt_text)
 
 
 class MarkdownEditor(QTextEdit):
-    def __init__(self, parent=None, is_dark_theme=True):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("EditorArea")
         self.setAcceptRichText(False)
-        self.setPlaceholderText("Type note here... (use / for formatting commands)")
+        self.setPlaceholderText("Type note here... (right-click for tools)")
 
-        self.is_dark_theme = is_dark_theme
-        self.highlighter = MarkdownHighlighter(self.document(), is_dark_theme)
-
-        # Slash autocomplete menu
-        self.slash_menu = SlashMenu()
-        self.slash_menu.itemClicked.connect(self.execute_command)
-        self.slash_active = False
-        self.slash_start_pos = -1
+        # Highlighter
+        self.highlighter = MarkdownLiveHighlighter(self)
+        self.prev_cursor_block = 0
+        self.cursorPositionChanged.connect(self.on_cursor_position_changed)
 
     def update_theme(self, is_dark_theme):
-        self.is_dark_theme = is_dark_theme
-        self.highlighter = MarkdownHighlighter(self.document(), is_dark_theme)
         self.highlighter.rehighlight()
 
-    def keyPressEvent(self, event):
-        if self.slash_menu.isVisible():
-            key = event.key()
+    def on_cursor_position_changed(self):
+        curr_block = self.textCursor().blockNumber()
+        if curr_block != self.prev_cursor_block:
+            doc = self.document()
+            p_block = doc.findBlockByNumber(self.prev_cursor_block)
+            c_block = doc.findBlockByNumber(curr_block)
+            if p_block.isValid():
+                self.highlighter.rehighlightBlock(p_block)
+            if c_block.isValid():
+                self.highlighter.rehighlightBlock(c_block)
+            self.prev_cursor_block = curr_block
 
-            if key == Qt.Key.Key_Up:
-                row = self.slash_menu.currentRow()
-                self.slash_menu.setCurrentRow(max(0, row - 1))
-                return
-            elif key == Qt.Key.Key_Down:
-                row = self.slash_menu.currentRow()
-                self.slash_menu.setCurrentRow(min(self.slash_menu.count() - 1, row + 1))
-                return
-            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
-                self.execute_command(self.slash_menu.currentItem())
-                return
-            elif key == Qt.Key.Key_Escape:
-                self.close_slash_menu()
-                return
-            elif key == Qt.Key.Key_Backspace:
-                # If they delete the slash, close the menu
-                cursor = self.textCursor()
-                if cursor.position() == self.slash_start_pos + 1:
-                    super().keyPressEvent(event)
-                    self.close_slash_menu()
+    def mousePressEvent(self, event):
+        # Checkbox click-toggle detection
+        if event.button() == Qt.MouseButton.LeftButton:
+            cursor = self.cursorForPosition(event.position().toPoint())
+            block = cursor.block()
+            text = block.text()
+            
+            # Match checked or unchecked task prefix
+            match = re.match(r'^(\s*[\-\*]\s+\[)([\sxX\s])(\].*)', text)
+            if match:
+                col = cursor.positionInBlock()
+                # If click falls inside the checkbox "[ ]" (typically characters 0-6)
+                if 0 <= col <= 6:
+                    prefix, val, suffix = match.groups()
+                    new_val = " " if val.strip() else "x"
+                    
+                    cursor.beginEditBlock()
+                    cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                    cursor.movePosition(QTextCursor.MoveOperation.KeepAnchor, QTextCursor.MoveOperation.EndOfBlock)
+                    cursor.insertText(f"{prefix}{new_val}{suffix}")
+                    cursor.endEditBlock()
+                    
+                    event.accept()
                     return
 
-        super().keyPressEvent(event)
+        super().mousePressEvent(event)
 
-        # Trigger slash menu
-        if event.text() == "/":
-            self.show_slash_menu()
-        elif self.slash_active:
-            self.filter_slash_menu()
+    def contextMenuEvent(self, event):
+        # Custom right-click context menu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: rgba(30, 30, 30, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                color: #F2F2F7;
+                padding: 6px 16px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        
+        copy_action = QAction("📋 Copy Content", self)
+        copy_action.triggered.connect(self.copy_content)
+        menu.addAction(copy_action)
+        
+        clear_action = QAction("🧹 Clear Content", self)
+        clear_action.triggered.connect(self.clear_content)
+        menu.addAction(clear_action)
+        
+        select_action = QAction("Select All", self)
+        select_action.triggered.connect(self.selectAll)
+        menu.addAction(select_action)
+        
+        menu.addSeparator()
+        
+        help_action = QAction("❓ Markdown Help Guide", self)
+        help_action.triggered.connect(self.show_help_overlay)
+        menu.addAction(help_action)
+        
+        menu.exec(event.globalPos())
 
-    def show_slash_menu(self):
-        self.slash_active = True
-        self.slash_start_pos = self.textCursor().position() - 1
+    def copy_content(self):
+        text = self.toPlainText()
+        QApplication.clipboard().setText(text)
 
-        # Locate slash position in screen coords
-        cursor_rect = self.cursorRect()
-        global_pos = self.viewport().mapToGlobal(cursor_rect.bottomLeft())
-        self.slash_menu.move(global_pos + QPoint(0, 5))
-        self.slash_menu.show()
-        self.slash_menu.setCurrentRow(0)
-        self.setFocus()
+    def clear_content(self):
+        self.clear()
 
-    def filter_slash_menu(self):
-        cursor = self.textCursor()
-        curr_pos = cursor.position()
-
-        # Check if cursor moved before the slash
-        if curr_pos <= self.slash_start_pos:
-            self.close_slash_menu()
-            return
-
-        # Get search query
-        cursor.setPosition(self.slash_start_pos + 1, QTextCursor.MoveMode.KeepAnchor)
-        query = cursor.selectedText().lower()
-
-        visible_count = 0
-        for i in range(self.slash_menu.count()):
-            item = self.slash_menu.item(i)
-            label = item.text().lower()
-            if query in label or not query:
-                item.setHidden(False)
-                visible_count += 1
-            else:
-                item.setHidden(True)
-
-        if visible_count == 0:
-            self.slash_menu.hide()
-        elif not self.slash_menu.isVisible():
-            self.slash_menu.show()
-
-    def close_slash_menu(self):
-        self.slash_active = False
-        self.slash_start_pos = -1
-        self.slash_menu.hide()
-
-    def execute_command(self, item):
-        if not item:
-            return
-
-        cmd_label = item.text()
-        template = ""
-        offset = 0
-
-        # Find template
-        for label, t, o in self.slash_menu.commands:
-            if label == cmd_label:
-                template = t
-                offset = o
-                break
-
-        if not template:
-            self.close_slash_menu()
-            return
-
-        # Replace typed command (from slash_start_pos to current position)
-        cursor = self.textCursor()
-        cursor.setPosition(self.slash_start_pos, QTextCursor.MoveMode.MoveAnchor)
-        cursor.setPosition(self.textCursor().position(), QTextCursor.MoveMode.KeepAnchor)
-        cursor.removeSelectedText()
-
-        # Check if we should insert inline or at the beginning of the line
-        # For block types: todo list, bullet points, headers
-        is_block = template.startswith(("-", "#"))
-
-        if is_block:
-            # Check if current line is empty
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
-            line_text = cursor.block().text()
-            if line_text == "":
-                cursor.insertText(template)
-            else:
-                cursor.movePosition(QTextCursor.MoveOperation.EndOfLine)
-                cursor.insertText("\n" + template)
-        else:
-            # Inline commands like bold/italic/code
-            cursor.insertText(template)
-            if offset != 0:
-                cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, abs(offset))
-
-        self.setTextCursor(cursor)
-        self.close_slash_menu()
-
-    def focusOutEvent(self, event):
-        # Close slash menu if user clicks elsewhere
-        super().focusOutEvent(event)
-        # Check if list widget is active before closing
-        if not self.slash_menu.hasFocus():
-            self.close_slash_menu()
+    def show_help_overlay(self):
+        note_window = self.window()
+        if hasattr(note_window, 'show_help_overlay'):
+            note_window.show_help_overlay()
