@@ -11,7 +11,7 @@ class MarkdownLiveHighlighter(QSyntaxHighlighter):
         self.editor = editor
         
         # Color palettes for high-contrast light pastel backgrounds
-        self.color_header = QColor("#0A84FF")      # Vibrant Blue
+        self.color_header = QColor("#000000")      # Black
         self.color_bold = QColor("#1C1C1E")        # Solid dark text
         self.color_italic = QColor("#1C1C1E")      # Solid dark text
         self.color_code = QColor("#C2410C")        # Pastel Orange/Brown
