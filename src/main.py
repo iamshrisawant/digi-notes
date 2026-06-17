@@ -237,6 +237,10 @@ class NoteManager(QObject):
                 self.all_notes_config[note_id]["active"] = False
                 note.close() # Safely saves and hides
                 self.save_all_config()
+                
+        # Always reload dashboard lists to keep it fully synced
+        self.dashboard.reload_notes()
+
 
     def delete_note(self, note_id):
         # Confirm deletion

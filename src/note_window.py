@@ -614,9 +614,12 @@ class StickyNote(QWidget):
         self.geom_anim.start()
 
     def deactivate(self):
-        self.help_overlay.hide()
-        self.hide()
-        self.config_changed.emit()
+        if self.manager:
+            self.manager.toggle_note_active(self.note_id, False)
+        else:
+            self.help_overlay.hide()
+            self.hide()
+            self.config_changed.emit()
 
     def load_note(self):
         if os.path.exists(self.filepath):
