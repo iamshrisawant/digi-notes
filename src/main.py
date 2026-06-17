@@ -6,6 +6,7 @@ import json
 import uuid
 import tempfile
 import getpass
+import datetime
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox, QWidget
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QAction
 from PySide6.QtCore import QObject, Qt, QRect, QLockFile, QPoint
@@ -132,16 +133,17 @@ class NoteManager(QObject):
                     "Please close or delete an existing note before spawning a new one."
                 )
             return None
-            
-        note_id = str(uuid.uuid4())
+        # Generate time-based note_id in format ddmmyy-hhmmss
+        base_id = datetime.datetime.now().strftime("%d%m%y-%H%M%S")
+        note_id = base_id
+        counter = 1
+        while note_id in self.all_notes_config:
+            note_id = f"{base_id}_{counter}"
+            counter += 1
         
         # Calculate new cascading window coordinates
         default_x, default_y = 150, 150
         offset = 25 * (len(self.notes) % 5)
-        
-        note = StickyNote(parent=self.dummy_parent, note_id=note_id, manager=self)
-        note.config_changed.connect(self.save_all_config)
-        note.note_deleted.connect(self.delete_note)
         
         # Assign distinct theme color
         theme_key = self.select_distinct_theme_color()
@@ -234,13 +236,21 @@ class NoteManager(QObject):
         if note_id in self.all_notes_config:
             self.all_notes_config.pop(note_id)
             
-        # 3. Delete markdown file
+        # 3. Delete markdown file and its metadata file
         filepath = os.path.join(self.data_dir, "notes", f"{note_id}.md")
+        meta_filepath = filepath + ".meta"
+        
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)
             except Exception as e:
                 print("Error deleting markdown file:", e)
+                
+        if os.path.exists(meta_filepath):
+            try:
+                os.remove(meta_filepath)
+            except Exception as e:
+                print("Error deleting metadata file:", e)
                 
         self.save_all_config()
 
@@ -251,6 +261,8 @@ class NoteManager(QObject):
         self.save_all_config()
 
     def drag_activate_note(self, note_id, global_pos):
+        if not note_id:
+            return
         # Spawning note on desktop and dragging it immediately
         if note_id not in self.notes:
             if len(self.notes) >= 6:

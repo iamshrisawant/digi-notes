@@ -5,10 +5,11 @@ import re
 import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QListWidget, QListWidgetItem, QPushButton, QGraphicsDropShadowEffect
+    QListWidget, QListWidgetItem, QPushButton, QGraphicsDropShadowEffect,
+    QApplication
 )
 from PySide6.QtGui import QColor, QMouseEvent
-from PySide6.QtCore import Qt, QSize, QPoint, Signal
+from PySide6.QtCore import Qt, QSize, QPoint, Signal, QObject, QEvent
 
 from styles import get_dashboard_stylesheet, THEMES
 
@@ -66,16 +67,19 @@ class NoteListItemWidget(QWidget):
             background-color: {theme_color};
             border-radius: 4px;
         """)
+        self.dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         layout.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
         
         # Text layout (Title and subtitle/time status)
         text_widget = QWidget(self)
+        text_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         text_layout = QVBoxLayout(text_widget)
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(4)
         
         title_lbl = QLabel(self.title_text, self)
         title_lbl.setProperty("class", "ItemTitle")
+        title_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         text_layout.addWidget(title_lbl)
         
         status_text = "Active" if self.is_active else "Inactive"
@@ -84,6 +88,7 @@ class NoteListItemWidget(QWidget):
         subtitle_lbl = QLabel(self)
         subtitle_lbl.setProperty("class", "ItemSubtitle")
         subtitle_lbl.setText(f"<html>{self.mtime_str} &nbsp;•&nbsp; <span style='color:{status_color}; font-weight:500;'>{status_text}</span></html>")
+        subtitle_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         text_layout.addWidget(subtitle_lbl)
         
         layout.addWidget(text_widget, 1)
@@ -99,6 +104,60 @@ class NoteListItemWidget(QWidget):
     def on_delete_clicked(self):
         self.delete_triggered.emit(self.note_id)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            dashboard = self.window()
+            if hasattr(dashboard, 'toggle_note'):
+                dashboard.toggle_note(self.note_id)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+
+class DashboardEventFilter(QObject):
+    def __init__(self, dashboard):
+        super().__init__(dashboard)
+        self.dashboard = dashboard
+        self.drag_start_pos = None
+        self.drag_item = None
+        self.drag_note_id = None
+        self.drag_triggered = False
+
+    def eventFilter(self, watched, event):
+        if watched == self.dashboard.list_widget:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self.drag_start_pos = event.position().toPoint()
+                    item = self.dashboard.list_widget.itemAt(self.drag_start_pos)
+                    if item:
+                        self.drag_item = item
+                        widget = self.dashboard.list_widget.itemWidget(item)
+                        if widget:
+                            self.drag_note_id = widget.note_id
+                        self.drag_triggered = False
+                    else:
+                        self.drag_item = None
+                        self.drag_note_id = None
+                        self.drag_triggered = False
+                        
+            elif event.type() == QEvent.Type.MouseMove:
+                if event.buttons() & Qt.MouseButton.LeftButton and self.drag_item and not self.drag_triggered:
+                    dist = (event.position().toPoint() - self.drag_start_pos).manhattanLength()
+                    if dist > QApplication.startDragDistance():
+                        self.drag_triggered = True
+                        self.dashboard.hide()
+                        self.dashboard.manager.drag_activate_note(self.drag_note_id, event.globalPosition().toPoint())
+                        self.drag_item = None
+                        self.drag_note_id = None
+                        return True
+                        
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self.drag_item = None
+                self.drag_note_id = None
+                self.drag_triggered = False
+                
+        return super().eventFilter(watched, event)
+
 
 class NotesDashboard(QWidget):
     def __init__(self, manager):
@@ -109,7 +168,7 @@ class NotesDashboard(QWidget):
         self.notes_dir = os.path.join(base_dir, "data", "notes")
         
         # Window configuration - Compact Sidebar
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(320, 460)
         self.resize(320, 520)
@@ -192,51 +251,17 @@ class NotesDashboard(QWidget):
         self.list_widget.setObjectName("NotesList")
         content_layout.addWidget(self.list_widget)
         
-        # Override list widget mouse events for dragging out
-        self.list_widget.mousePressEvent = self.list_mouse_press
-        self.list_widget.mouseMoveEvent = self.list_mouse_move
-        self.list_widget.mouseReleaseEvent = self.list_mouse_release
-        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        # Event filter for drag and drop
+        self.drag_filter = DashboardEventFilter(self)
+        self.list_widget.installEventFilter(self.drag_filter)
 
-    def list_mouse_press(self, event):
-        QListWidget.mousePressEvent(self.list_widget, event)
-        item = self.list_widget.itemAt(event.position().toPoint())
-        if item:
-            self.drag_start_pos = event.position().toPoint()
-            self.drag_item = item
-            widget = self.list_widget.itemWidget(item)
-            if widget:
-                self.drag_note_id = widget.note_id
-            self.drag_triggered = False
-        else:
-            self.drag_item = None
-            self.drag_note_id = None
-            self.drag_triggered = False
-
-    def list_mouse_move(self, event):
-        QListWidget.mouseMoveEvent(self.list_widget, event)
-        if hasattr(self, 'drag_item') and self.drag_item and not self.drag_triggered:
-            dist = (event.position().toPoint() - self.drag_start_pos).manhattanLength()
-            if dist > 10:
-                self.drag_triggered = True
-                self.hide() # Get dashboard out of the way
-                self.manager.drag_activate_note(self.drag_note_id, event.globalPosition().toPoint())
-                self.drag_item = None
-                self.drag_note_id = None
-
-    def list_mouse_release(self, event):
-        QListWidget.mouseReleaseEvent(self.list_widget, event)
-        self.drag_item = None
-        self.drag_note_id = None
-
-    def on_item_clicked(self, item):
-        if hasattr(self, 'drag_triggered') and self.drag_triggered:
-            return
-        widget = self.list_widget.itemWidget(item)
-        if widget:
-            # Toggle active status
-            self.manager.toggle_note_active(widget.note_id, not widget.is_active)
-            self.reload_notes()
+    def toggle_note(self, note_id):
+        # Find the note config to toggle its active status
+        for note_data in self.manager.get_all_notes_config():
+            if note_data.get("id") == note_id:
+                self.manager.toggle_note_active(note_id, not note_data.get("active", True))
+                self.reload_notes()
+                break
 
     def title_press(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

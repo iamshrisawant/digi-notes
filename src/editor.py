@@ -4,6 +4,7 @@ import re
 from PySide6.QtWidgets import QTextEdit, QMenu, QApplication
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextCursor, QAction
 from PySide6.QtCore import Qt, QPoint, QRect, Signal
+from styles import THEMES
 
 class MarkdownLiveHighlighter(QSyntaxHighlighter):
     def __init__(self, editor):
@@ -106,7 +107,12 @@ class MarkdownLiveHighlighter(QSyntaxHighlighter):
             prefix_len = len(prefix)
             
             fmt_prefix = QTextCharFormat()
-            fmt_prefix.setForeground(self.color_header)
+            note_window = self.editor.window()
+            theme_key = getattr(note_window, "theme_key", "yellow")
+            theme = THEMES.get(theme_key, THEMES["yellow"])
+            accent_color = QColor(theme["accent_color"])
+            
+            fmt_prefix.setForeground(accent_color)
             fmt_prefix.setFontWeight(QFont.Weight.Bold)
             self.setFormat(0, prefix_len, fmt_prefix)
             
@@ -119,7 +125,12 @@ class MarkdownLiveHighlighter(QSyntaxHighlighter):
             prefix_len = len(prefix)
             
             fmt_prefix = QTextCharFormat()
-            fmt_prefix.setForeground(self.color_header)
+            note_window = self.editor.window()
+            theme_key = getattr(note_window, "theme_key", "yellow")
+            theme = THEMES.get(theme_key, THEMES["yellow"])
+            accent_color = QColor(theme["accent_color"])
+            
+            fmt_prefix.setForeground(accent_color)
             fmt_prefix.setFontWeight(QFont.Weight.Bold)
             self.setFormat(0, prefix_len, fmt_prefix)
             
