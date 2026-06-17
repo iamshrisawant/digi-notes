@@ -271,6 +271,64 @@ class MarkdownEditor(QTextEdit):
                 self.highlighter.rehighlightBlock(c_block)
             self.prev_cursor_block = curr_block
 
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() == Qt.KeyboardModifier.NoModifier:
+                cursor = self.textCursor()
+                block = cursor.block()
+                text = block.text()
+                pos_in_block = cursor.positionInBlock()
+
+                chk_re = re.compile(r'^(\s*[\-\*\+]\s+\[[\sxX\s]\]\s+)(.*)')
+                num_re = re.compile(r'^(\s*)(\d+)\.(\s+)(.*)')
+                bullet_re = re.compile(r'^(\s*[\-\*\+]\s+)(.*)')
+
+                chk_match = chk_re.match(text)
+                num_match = num_re.match(text)
+                bullet_match = bullet_re.match(text)
+
+                matched_prefix = None
+                next_prefix = None
+
+                if chk_match:
+                    prefix = chk_match.group(1)
+                    if pos_in_block >= len(prefix):
+                        matched_prefix = prefix
+                        next_prefix = re.sub(r'\[[sxX\s]\]', '[ ]', prefix)
+                elif num_match:
+                    prefix = num_match.group(1) + num_match.group(2) + "." + num_match.group(3)
+                    if pos_in_block >= len(prefix):
+                        matched_prefix = prefix
+                        leading_spaces = num_match.group(1)
+                        num = int(num_match.group(2))
+                        trailing_spaces = num_match.group(3)
+                        next_prefix = f"{leading_spaces}{num + 1}.{trailing_spaces}"
+                elif bullet_match:
+                    prefix = bullet_match.group(1)
+                    if pos_in_block >= len(prefix):
+                        matched_prefix = prefix
+                        next_prefix = prefix
+
+                if matched_prefix is not None:
+                    remainder = text[len(matched_prefix):].strip()
+                    if not remainder and pos_in_block == len(text):
+                        cursor.beginEditBlock()
+                        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                        cursor.removeSelectedText()
+                        cursor.endEditBlock()
+                        self.setTextCursor(cursor)
+                        return
+                    else:
+                        cursor.beginEditBlock()
+                        cursor.insertText("\n" + next_prefix)
+                        cursor.endEditBlock()
+                        self.setTextCursor(cursor)
+                        self.ensureCursorVisible()
+                        return
+
+        super().keyPressEvent(event)
+
     def mousePressEvent(self, event):
         # Checkbox click-toggle detection
         if event.button() == Qt.MouseButton.LeftButton:
@@ -289,7 +347,7 @@ class MarkdownEditor(QTextEdit):
                     
                     cursor.beginEditBlock()
                     cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-                    cursor.movePosition(QTextCursor.MoveOperation.KeepAnchor, QTextCursor.MoveOperation.EndOfBlock)
+                    cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
                     cursor.insertText(f"{prefix}{new_val}{suffix}")
                     cursor.endEditBlock()
                     
