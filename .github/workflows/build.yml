@@ -1,0 +1,61 @@
+name: Build Desktop Packages
+
+on:
+  push:
+    branches: [ "packaging" ]
+  pull_request:
+    branches: [ "packaging" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: "DigiNotes-Windows"
+            path_in_dist: "dist/diginotes.exe"
+            pyinstaller_args: '--icon "images/app_icon.png" --add-data "images;images"'
+          - os: macos-latest
+            artifact_name: "DigiNotes-macOS"
+            path_in_dist: "dist/diginotes"
+            pyinstaller_args: '--icon "images/app_icon.png" --add-data "images:images"'
+          - os: ubuntu-latest
+            artifact_name: "DigiNotes-Linux"
+            path_in_dist: "dist/diginotes"
+            pyinstaller_args: '--icon "images/app_icon.png" --add-data "images:images"'
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Linux Dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build Executable with PyInstaller
+      run: |
+        pyinstaller --noconfirm --windowed --onefile --name "diginotes" ${{ matrix.pyinstaller_args }} src/main.py
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.path_in_dist }}
+        retention-days: 7
