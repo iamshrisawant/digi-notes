@@ -19,14 +19,17 @@ jobs:
             artifact_name: "DigiNotes-Windows"
             path_in_dist: "dist/diginotes.exe"
             pyinstaller_args: '--icon "images/app_icon.png" --add-data "images;images"'
+            is_linux: false
           - os: macos-latest
             artifact_name: "DigiNotes-macOS"
-            path_in_dist: "dist/diginotes"
+            path_in_dist: "dist/diginotes.app"
             pyinstaller_args: '--icon "images/app_icon.png" --add-data "images:images"'
+            is_linux: false
           - os: ubuntu-latest
             artifact_name: "DigiNotes-Linux"
-            path_in_dist: "dist/diginotes"
+            path_in_dist: "diginotes_1.0.0_amd64.deb"
             pyinstaller_args: '--icon "images/app_icon.png" --add-data "images:images"'
+            is_linux: true
 
     steps:
     - name: Checkout Code
@@ -50,9 +53,16 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller pillow
 
-    - name: Build Executable with PyInstaller
+    - name: Build Executable with PyInstaller (Windows & macOS)
+      if: ${{ !matrix.is_linux }}
       run: |
         pyinstaller --noconfirm --windowed --onefile --name "diginotes" ${{ matrix.pyinstaller_args }} src/main.py
+
+    - name: Build Debian Installer (Linux)
+      if: ${{ matrix.is_linux }}
+      run: |
+        chmod +x build_installer.sh
+        ./build_installer.sh
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
