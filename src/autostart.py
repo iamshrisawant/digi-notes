@@ -61,6 +61,7 @@ Exec="{launcher}" --startup
 Icon=system-run
 Comment=Sticky notes manager
 Terminal=false
+StartupNotify=false
 X-GNOME-Autostart-enabled=true
 """
                 try:

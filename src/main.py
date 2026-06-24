@@ -3,7 +3,6 @@
 import sys
 import os
 import json
-import uuid
 import tempfile
 import getpass
 import datetime
@@ -279,21 +278,14 @@ class NoteManager(QObject):
         if note_id in self.all_notes_config:
             self.all_notes_config.pop(note_id)
             
-        # 3. Delete markdown file and its metadata file
+        # 3. Delete markdown file
         filepath = os.path.join(self.data_dir, "notes", f"{note_id}.md")
-        meta_filepath = filepath + ".meta"
         
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)
             except Exception as e:
                 print("Error deleting markdown file:", e)
-                
-        if os.path.exists(meta_filepath):
-            try:
-                os.remove(meta_filepath)
-            except Exception as e:
-                print("Error deleting metadata file:", e)
                 
         self.save_all_config()
 

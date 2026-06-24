@@ -3,7 +3,6 @@
 import os
 import re
 import uuid
-import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, 
     QGraphicsDropShadowEffect, QApplication, QMenu, QFrame, QLabel, QScrollArea
@@ -267,15 +266,7 @@ class StickyNote(QWidget):
         self.note_id = note_id or str(uuid.uuid4())
         
         # Storage (using user-writable directory to prevent permission errors)
-        if self.manager and hasattr(self.manager, 'data_dir'):
-            self.data_dir = self.manager.data_dir
-        else:
-            from PySide6.QtCore import QStandardPaths
-            data_location = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-            if not data_location.rstrip("/\\").endswith("DigiNotes"):
-                self.data_dir = os.path.join(data_location, "DigiNotes")
-            else:
-                self.data_dir = data_location
+        self.data_dir = self.manager.data_dir
                 
         self.notes_dir = os.path.join(self.data_dir, "notes")
         os.makedirs(self.notes_dir, exist_ok=True)
@@ -307,9 +298,6 @@ class StickyNote(QWidget):
         
         # 1. Force the Window Manager to recognize the Always-on-Top hint
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        
-        # 2. Tell the OS to update the window behavior immediately
-        self.show()
     def init_ui(self):
         # Base frame
         self.main_widget = QWidget(self)
@@ -635,7 +623,6 @@ class StickyNote(QWidget):
                 with open(self.filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
                 self.editor.setPlainText(content)
-                self.load_metadata()
             except Exception as e:
                 print("Error loading note file:", e)
 
@@ -644,7 +631,6 @@ class StickyNote(QWidget):
         try:
             with open(self.filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-            self.save_metadata()
         except Exception as e:
             print("Error saving note file:", e)
 
@@ -689,21 +675,4 @@ class StickyNote(QWidget):
             "h": self.expanded_geometry.height()
         }
 
-    def load_metadata(self):
-        meta_path = self.filepath + ".meta"
-        if os.path.exists(meta_path):
-            try:
-                with open(meta_path, 'r') as f:
-                    meta = json.load(f)
-                self.load_config(meta)
-            except Exception as e:
-                print("Error loading note metadata:", e)
 
-    def save_metadata(self):
-        meta_path = self.filepath + ".meta"
-        try:
-            meta = self.get_config()
-            with open(meta_path, 'w') as f:
-                json.dump(meta, f)
-        except Exception as e:
-            print("Error saving note metadata:", e)

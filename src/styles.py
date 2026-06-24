@@ -93,7 +93,7 @@ QSS_TEMPLATE = """
 }
 
 /* Input Fields & Text Area */
-#EditorArea, #RenderArea {
+#EditorArea {
     background: transparent;
     border: none;
     color: %(text_color)s;
@@ -126,26 +126,7 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
 
-/* Slash Autocomplete Pop-up */
-#SlashMenu {
-    background-color: rgba(30, 30, 30, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    color: #F2F2F7;
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 12px;
-}
 
-#SlashMenu::item {
-    padding: 4px 10px;
-    border-radius: 4px;
-    color: #E5E5EA;
-}
-
-#SlashMenu::item:selected {
-    background-color: %(accent_color)s;
-    color: white;
-}
 
 /* Collapsed Dot Styling - Minimalist Circle */
 #CollapsedDot {

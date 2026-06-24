@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox, QSpinBox, QPushButton, QTabWidget, QGraphicsDropShadowEffect
 )
 from PySide6.QtGui import QColor
-from PySide6.QtCore import Qt, QPoint, QEvent
+from PySide6.QtCore import Qt
 
 from styles import THEMES
 
@@ -195,7 +195,7 @@ class SettingsDialog(QWidget):
         layout.addLayout(theme_layout)
         
         # Default Pinning
-        self.default_pin_chk = QCheckBox("Default Pinned (Always-on-Top)", self.tab_defaults)
+        self.default_pin_chk = QCheckBox("Default Pinned", self.tab_defaults)
         layout.addWidget(self.default_pin_chk)
         
         # Default Width
