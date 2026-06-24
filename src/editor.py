@@ -256,8 +256,6 @@ class MarkdownEditor(QTextEdit):
         self.prev_cursor_block = 0
         self.cursorPositionChanged.connect(self.on_cursor_position_changed)
 
-    def update_theme(self, is_dark_theme):
-        self.highlighter.rehighlight()
 
     def on_cursor_position_changed(self):
         curr_block = self.textCursor().blockNumber()
