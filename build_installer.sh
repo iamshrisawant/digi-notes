@@ -9,7 +9,7 @@ rm -rf build dist deb_package *.spec *.deb
 
 # 2. Run PyInstaller to bundle into a single native binary
 echo "Compiling with PyInstaller..."
-./.venv/bin/pyinstaller --onefile --noconsole --name "diginotes" --icon "images/app_icon.png" --add-data "images:images" src/main.py
+pyinstaller --onefile --noconsole --name "diginotes" --icon "images/app_icon.png" --add-data "images:images" src/main.py
 
 # 3. Create Debian Package Structure
 echo "Structuring Debian package..."
